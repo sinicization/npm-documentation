@@ -5,18 +5,22 @@
 //    CLI should be updated.  The `releases.json` should contain an array
 //    of versions, each with the following information:
 //
-//    `id`: A short identifier for the version, eg `v6` or `v7`.  This
-//          will be used as the input folder for the documentation; an
-//          instance of the CLI should reside at that path beneath the
-//          `cli` directory.  (Submodules are a good idea here.)  It
-//          will also be used as the output folder in the main content.
+//         `id`: A short identifier for the version, eg `v6` or `v7`.  This
+//               will be used as the input folder for the documentation; an
+//               instance of the CLI should reside at that path beneath the
+//               `cli` directory.  (Submodules are a good idea here.)  It
+//               will also be used as the output folder in the main content.
 //    `version`: The full major semantic version number (eg `6.0.0`).
-//          This will be used in examples in the documentation.
-//    `title`: A long description of the version information.  This will
-//          be used in the version picker,.
-//    `branch`: The branch name for the version.
+//               This will be used in examples in the documentation.
+//      `title`: A long description of the version information.  This will
+//               be used in the version picker,.
+//     `branch`: The branch name for the version.
 //
-// 2. Read each directory specified in the `releases.json`.  The data in
+// 2. Update the submodules in each directory specified in the
+//    `releases.json`.  The submodule will be updated to the tip of the
+//    `branch` specified.
+//
+// 3. Read each directory specified in the `releases.json`.  The data in
 //    `docs/content` will be read.  Each file will be translated in order
 //    to add `redirects` (as `redirect_from` frontmatter).  Other
 //    `translations` may be specified to make the data suitable for the
@@ -24,14 +28,16 @@
 //    will be added so that the gatsby theme knows the GitHub repository
 //    information for the content.
 //
-// 3. The navigation will be read from `@npm/gatsby-theme-doctornpm/nav.yml`.
+// 4. The navigation will be read from `gatsby-theme-doctornpm/nav.yml`.
 //    It will be added to the main site's `nav.yml`.
 
 const fs = require('fs');
 const path = require('path');
-const config = require('./releases.json');
+const child_process = require('child_process');
 const yaml = require('yaml');
 const mkdirp = require('mkdirp');
+
+const config = require('./releases.json');
 
 const githubRepo = 'npm/cli';
 const githubUrl = 'https://github.com/npm/cli';
@@ -40,14 +46,14 @@ const docsPath = path.dirname(__dirname);
 const inputPath = path.join(docsPath, 'cli');
 const outputPath = path.join(docsPath, 'content');
 
-const baseNavPath = path.join(docsPath, 'src', '@npm', 'gatsby-theme-doctornpm', 'base-nav.yml');
-const outputNavPath = path.join(docsPath, 'src', '@npm', 'gatsby-theme-doctornpm', 'nav.yml');
+const baseNavPath = path.join(docsPath, 'src', 'gatsby-theme-doctornpm', 'base-nav.yml');
+const outputNavPath = path.join(docsPath, 'src', 'gatsby-theme-doctornpm', 'nav.yml');
 
 const cliTitle = 'npm CLI';
 const cliUrl = '/cli';
 
 const cliContentPath = path.join('docs', 'content');
-const cliNavPath = path.join('docs', 'src', '@npm', 'gatsby-theme-doctornpm', 'nav.yml');
+const cliNavPath = path.join('docs', 'src', 'gatsby-theme-doctornpm', 'nav.yml');
 
 const translations = {
     'index.mdx': {
@@ -117,11 +123,25 @@ const redirects = {
     ],
 };
 
-config.forEach((version) => {
-    copyDocs(version);
-});
-
+updateSubmodules(config);
+copyDocs(config);
 updateNav(config);
+
+function updateSubmodules(config) {
+    child_process.execSync("git submodule init");
+    child_process.execSync("git submodule update");
+
+    for (let version of config) {
+        const cliRoot = path.join(inputPath, version.id);
+
+        console.log(version);
+        console.log(cliRoot);
+
+        process.chdir(cliRoot);
+        child_process.execSync(`git checkout origin/${version.branch}`);
+        process.chdir(inputPath);
+    }
+}
 
 function updateNav(config) {
     const nav = yaml.parse(fs.readFileSync(baseNavPath, 'utf8'));
@@ -292,7 +312,13 @@ function translate(config, data) {
     return data;
 }
 
-function copyDocs(config, relativedir) {
+function copyDocs(config) {
+    for (let version of config) {
+        copyDocsForVersion(version);
+    }
+}
+
+function copyDocsForVersion(config, relativedir) {
     const contentRoot = path.join(inputPath, config.id, cliContentPath);
     const dirPath = relativedir ? path.join(contentRoot, relativedir) : contentRoot;
 
@@ -301,7 +327,7 @@ function copyDocs(config, relativedir) {
         const childpath = path.join(contentRoot, relativechild);
 
         if (fs.lstatSync(childpath).isDirectory()) {
-            copyDocs(config, relativechild);
+            copyDocsForVersion(config, relativechild);
         } else {
             const contents = fs.readFileSync(childpath).toString();
             const components = contents.match(/^---\n(.*)\n---\n(.*)/s);
